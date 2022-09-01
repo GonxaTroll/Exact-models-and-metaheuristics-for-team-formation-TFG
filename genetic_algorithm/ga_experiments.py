@@ -9,10 +9,10 @@ import time
 from GA import *
 import os
 
-## Búsqueda en rejilla de los mejores operadores/hiperparámetros
-## 70% de las clases generadas aleatoriamente para entrenamiento
-## 10 repeticiones (poblaciones aleatorias) por clase
-## Misma población para cada configuración y para cada puntuación
+# Grid search of best operators/hyperparameters
+# 70% of classes randomly generated for training
+# 10 repetitions (random populations) per class
+# Same population for each configuration and each scoring function
 
 
 class EXPGA(StudentGA):
@@ -55,12 +55,8 @@ class EXPGA(StudentGA):
             replacement = self.elitist_replacement
 
         population = initial_population
-        # population = self.load_random_population(experiment_file_path)
-        # population = self.generate_random_population(population_size=100)
         generated_children = len(population)//2
-        ##experiment_name = ##
-###primer algoritmo genético: hacerlo así y luego ampliar
-###cromosoma, operador de cruce, de mutación, de mantenimiento de la población, de selección, esquema
+
         fitnesses = [self.get_fitness(x) for x in population]
         best_fitness_individual_iteration = max(fitnesses)
         best_individual_iteration = population[fitnesses.index(best_fitness_individual_iteration)]
@@ -72,10 +68,9 @@ class EXPGA(StudentGA):
             result_data = pd.DataFrame(result_data,columns=final_variables)
             iteration_data = pd.DataFrame(iteration_data,columns=final_variables)
             return result_data,iteration_data
-        ##
+    
         best_last_fitness = best_fitness_individual_iteration
         repeated_iterations=0
-        ##
 
         while iterations < 500:
             ini_iteration_time = time.time()
@@ -87,27 +82,22 @@ class EXPGA(StudentGA):
                 contador = 0
                 provisional_children = []
                 while len(new_children) < 2 or contador < 5:
-                    ##permutation
                     parent1_perm = parents[i][0]
                     parent2_perm = parents[i+1][0]
                     keys = [parents[i][1], parents[i+1][1]]
 
                     r = random.random()
                     if r <= p_cross:
-                        # children_perm = NWOX(parent1_perm, parent2_perm)
                         children_perm = crossover(parent1_perm, parent2_perm)
                         random.shuffle(keys)
-                        #no se incluye la llave de bits porque se hereda?
                     else:
                         children_perm = [parent1_perm, parent2_perm]
-
 
                     mutated_children = []
                     for i in range(len(children_perm)):
                         mutated_child_perm, mutated_key = children_perm[i],keys[i]
                         r = random.random()
                         if r <= p_mut:
-                            # mutated_child_perm = simple_swap(mutated_child_perm)
                             mutated_child_perm = mutation(mutated_child_perm)
                             mutated_key = mask_mutation(mutated_key)
                         mutated_children.append([mutated_child_perm,mutated_key])
@@ -126,9 +116,7 @@ class EXPGA(StudentGA):
                 for c in new_children:
                     final_children.append(c)
 
-            # population = self.elitist_replacement(population, final_children)
             population=replacement(population, final_children)
-
 
             best_individual_iteration = population[0]
             best_fitness_individual_iteration = self.get_fitness(best_individual_iteration)
@@ -137,16 +125,12 @@ class EXPGA(StudentGA):
             iteration_data.append([full_name,experiment_file_path,str(configuration), best_fitness_individual_iteration, 
                                    iterations,end_iteration_time, "pop",optimal_solution])
 
-            ###
             if best_fitness_individual_iteration <= best_last_fitness:
                 repeated_iterations += 1
             else:
                 repeated_iterations = 0
             best_last_fitness = best_fitness_individual_iteration
-            ###
-            # print(iterations,best_fitness_individual_iteration)
             if best_fitness_individual_iteration >= optimal_solution or iterations==500 or repeated_iterations == 100: 
-            # if best_fitness_individual_iteration >= optimal_solution or iterations==500: 
                 final_time = time.time()-ini_time
                 result_data = [[full_name,experiment_file_path,str(configuration), best_fitness_individual_iteration,
                                 iterations, final_time, population,optimal_solution]]
@@ -155,17 +139,15 @@ class EXPGA(StudentGA):
                 iteration_data.drop(columns=["final_population"],inplace=True)
                 return result_data,iteration_data
 
-            # print(best_fitness_individual_iteration)
-
-#### PROGRAMA PRINCIPAL
+#### MAIN PROGRAM
 data = pd.read_csv("../data/student_data_anon.csv",delimiter=";")
-nomate_list = [] #en principio vacía
+nomate_list = [] 
 nomate_list = list(map(set,nomate_list))
 compulsory = []
 compulsory = list(map(set,compulsory))
 restr_num_groups = {}
 
-#Argumentos para la CLI. Obligatorios son la heurística y el tamaño de las clases.
+# CLI arguments. Heuristic and class size are mandatory.
 parser = argparse.ArgumentParser()
 parser.add_argument("scoring_function",help="Use 'belbin' or 'mbti' heuristic")
 parser.add_argument("class_size",help="Sample size of students")
@@ -190,7 +172,7 @@ repsize = args.repsize
 expreps = args.expreps
 test = args.test
 
-####INCLUIR EN LA CLASE UNA FORMA DE QUE SI NO SE PUEDEN FORMAR DIVISIONES VÁLIDAS DEVUELVA ERROR
+# (INCLUIR EN LA CLASE UNA FORMA DE QUE SI NO SE PUEDEN FORMAR DIVISIONES VÁLIDAS DEVUELVA ERROR)
 data = pd.read_csv("../data/student_data_anon.csv",delimiter=";")
 small_data, rep_subset_students  = subset_generate_data(data, score_f, class_size, repsize,path="../data/")
 
@@ -222,7 +204,7 @@ if not test:
     try:
         with open("tuning_configurations.txt","r") as config_file:
             configurations = [literal_eval(line) for line in config_file]
-    except: ## QUEDAN POR DEFINIR LAS CONFIGURACIONES EN CONCRETO
+    except: 
         with open("tuning_configurations.txt","w") as config_file:
             configurations = list(itertools.product(
             *[["NWOX","CX"],[0.7,0.9],
@@ -283,7 +265,6 @@ if not test:
                 try:
                     population = genetic.load_random_population(f"populations/classize-{class_size}/{ming}to{maxg}/{filename_pop}.txt")
                 except:
-                    # pathlib.Path(f"/populations/classize-{class_size}")
                     if not os.path.exists(f"populations/classize-{class_size}/{ming}to{maxg}"):
                         os.makedirs(f"populations/classize-{class_size}/{ming}to{maxg}",exist_ok=False)
                     genetic.save_random_population(f"populations/classize-{class_size}/{ming}to{maxg}/{filename_pop}.txt")
@@ -312,7 +293,6 @@ else:
         for config in best_configs:
             list_full_data,list_iteration_data = [],[]
             for rep in range(1,11):
-                # print(rep)
                 subset_students = rep_subset_students[ins]
                 subset_students,scores_dict = get_scores_subset_students(small_data,subset_students)
                 genetic = EXPGA(subset_students,scores_dict,compulsory,nomate_list,ming,maxg,restr_num_groups,scoring_type=score_f)

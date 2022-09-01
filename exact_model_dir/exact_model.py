@@ -1,5 +1,5 @@
+"""Exact model: Generation of team combinations and build of the exact models."""
 import itertools
-from numpy import size
 from ortools.linear_solver import pywraplp
 from ortools.sat.python import cp_model
 import time
@@ -9,51 +9,122 @@ if __name__=="__main__":
 from general_functions import belbin_score, mbti_score
 
 
-#define el modelo entero (variables, restricciones, función objetivo...)
+def generate_combinations(subset_students,mini,maxi): 
+    """
+    Generates all team combinations given the team sizes and a set of students.
 
-def generate_combinations(subset_students,mini,maxi): #devuelve una lista de conjuntos con todas las combinaciones
+    Args:
+      subset_students (list): Numbers representing the student IDs.
+      mini (int): Minimum team size.
+      maxi (int): Maximum team size.
+    
+    Returns:
+      combination_list (list): each element is a set of students forming the team.
+    """
     combination_list = []
-    for i in range(mini,maxi+1): #diferencia con anterior: se prueba todas las combinaciones de 3 a 5 alumnos por grupo (mini,maxi)
+    for i in range(mini,maxi+1): # Considering all team sizes in the range [mini,maxi]
         combination_list2 = list(itertools.combinations(subset_students,i))
         combination_list += combination_list2
-    combination_list = list(map(set,combination_list)) #los grupos (tuplas) se transforman a conjuntos para uso de funciones de filtrado
+    combination_list = list(map(set,combination_list)) # Each group is a set now
     return combination_list
 
+def delete_no_mates(combination_list,nomate_list):
+    """
+    Filters those teams with incompatible students.
+    Applied after `generate_combinations` will return the feasible teams
+    of the problem.
+
+    Args:
+      combination_list (list): each element is a set of students forming the team.
+      nomate_list (int): Each element is a pair of incompatible students, represented
+        as a set. Example: [{1,3}, {6,87}] 
+    
+    Returns:
+      feasible_teams (list): each element is a set of students forming a feasible team.
+    """
+    feasible_teams = []
+    for team in combination_list:
+        mates = True
+        for nomates in nomate_list:
+            if nomates.intersection(team)==nomates: 
+                # The team must not be considered if its intersection with the incompatible
+                # pair is the same as this pair (meaning that this pair is in fact in the team)
+                mates = False
+                break
+        if mates:
+            feasible_teams.append(team)
+    return feasible_teams
+
 def use_pywrap_model(teams,students,compulsory,scores_d,score_f,restr_num_groups,sname="SCIP"):
-    solver = pywraplp.Solver.CreateSolver(sname) #inicialización del solver
+    """
+    Begins by creating a model found in the pywrap module (SCIP, CBC, GLOP...).
+    Continues by filling the model with the objective function and constraints that
+    are defined in `V. Sanchez-Anguix, J. M. Alberola, E. D. Val, A. Palomares, & M.-D. Teruel, 
+    «Assessing the use of intelligent tools to group tourism students into teams: 
+    a comparison between team formation strategies»` for team formation.
+    Ends up solving the problem and giving the results obtained.
+
+
+    Args:
+      teams (list): Teams considered as "feasible" in the problem.
+      students (list): Numbers representing the student IDs.
+      compulsory (list): Each element is a pair of compulsory students, represented
+        as a set. Example: [{1,3}, {6,87}] 
+      scores_d (dict): Contains the team roles or personality traits as keys and the
+        values are lists of the scores obtained by each student. The ith score in these
+        lists should match with the ith student in the `students` list.
+        Example 1: {“CW”:[13,5,89,…,7],…,”CF”:[1,5,2,…,77]} 
+        Example 2: {“E/I”:[3,-5,-9,…,6],…,”J/P”:[1,5,2,…,-17]}
+      score_f (int): if it is 1, Belbin heuristic will be used. If it is 2, MBTI will
+        be used. It is presupposed that this argument is used correctly, this is, if
+        `scores_d` has Belbin scores, the user will then select `score_f=1`
+      restr_num_groups (dict): relates to a new family of constraints where there is
+        a limitation on the minimum/maximum number of groups to form of a certain size. 
+        Keys are the team sizes, values are the minimum/maximum number of them.
+        Example: {3:[0,4],4:[0,7],5:[0,6]}
+      sname (str, optional): Name of the solver to be used.
+    
+    Returns:
+      solve_time (float): Resolution time
+      result_string (str): Type of result (optimal, feasible, abnormal...)
+      best_teams (list): Given solution.
+      best_scores (list): Each element is the score obtained by each team in the solution.
+      value (float): Objective function's value for the given solution.
+    """
+    solver = pywraplp.Solver.CreateSolver(sname) # Solver initialization
     teams_variables = []
-    for team in teams: #1 variable binaria por equipo posible
+    for team in teams: # 1 binary variable for each possible team
         v = solver.BoolVar(f"Team {team} is selected for the project")
-        teams_variables.append(v) #se añade a esta lista
+        teams_variables.append(v) # Adding the variables to a list
         
-    #Restriction 1. Complete partition
+    # Restriction 1. Complete partition
     restr = solver.Constraint(len(students),len(students), f"Complete partition")
     for i in range(len(teams)):
         team = teams[i]
-        team_size = len(team) #tamaño del equipo
+        team_size = len(team)
         var = teams_variables[i]
-        restr.SetCoefficient(var,team_size) #asignación de tamaño de equipo a la restricción
+        restr.SetCoefficient(var,team_size) # Assigning team size to constraint
         
-    #Restriction 2. Student j in only a team
-    for stu in students: #para cada estudiante...
+    # Restriction 2. Student j in only a team
+    for stu in students: # For each student...
         restr = solver.Constraint(1,1, f"Student {stu} in only a team")
-        for i in range(len(teams)): #...se mira en qué equipos está...
+        for i in range(len(teams)): #...we look in which teams it is...
             if stu in teams[i]:
                 var = teams_variables[i]
-                restr.SetCoefficient(var,1) #...y se añade a la restricción en caso afirmativo
+                restr.SetCoefficient(var,1) #...and we add to constraint in affirmative case
                 
-    #Restriction 3. Compulsory students in only a team
+    # Restriction 3. Compulsory students in only a team
     set_st = set(students)
     for cjt in compulsory:
-        if cjt.intersection(set_st)==cjt: #verifica que los estudiantes indicados estén dentro del conjunto total de estudiantes
+        if cjt.intersection(set_st)==cjt: # Verifies that considered students are in the set of all students
             restr = solver.Constraint(1,1, f"Compulsory students: {cjt}")
             for i in range(len(teams)):
                 team = teams[i]
-                if team.intersection(cjt): #si la intersección del equipo y los compulsory no es nula, es porque alguno está en ese equipo, por lo que se añade a la restricción
+                if team.intersection(cjt): # If intersection between team and compulsory pair is not null, someone is in that team
                     var = teams_variables[i]
                     restr.SetCoefficient(var,1)
 
-    #Restriction 4. Minimum and maximum number of groups of certain size
+    # Restriction 4. Minimum and maximum number of groups of certain size
     for group_size, reslist in restr_num_groups.items():
         restr = solver.Constraint(reslist[0],reslist[1], f"Number of size {group_size} restriction")
         for i in range(len(teams)):
@@ -61,31 +132,34 @@ def use_pywrap_model(teams,students,compulsory,scores_d,score_f,restr_num_groups
             if len(team) == group_size:
                 var = teams_variables[i]
                 restr.SetCoefficient(var,1)
-    ### Objective function
+
+    # Objective function
     objective = solver.Objective()
     objective.SetMaximization()
     score_list = []
-    for i in range(len(teams)): #llamamos a la función de puntuación (belbin, mbti...) para cada posible equipo
+    for i in range(len(teams)): # Calling the scoring function for each possible team
         variable = teams_variables[i]
         team = teams[i]
         if score_f==1:
             score = belbin_score(scores_d,team,students)
         elif score_f==2:
             score = mbti_score(scores_d,team,students)
-        objective.SetCoefficient(variable, score) #coeficiente función objetivo
-        score_list.append(score) #se añade tamb a una lista de valores precomputados para llamar luego
+        objective.SetCoefficient(variable, score) 
+        score_list.append(score) # Also adding the scores in a list that can be reused later
 
     t1 = time.time()
     result_type = solver.Solve()
-    solve_time = time.time()-t1 #apuntamos tiempo de resolución
+    solve_time = time.time()-t1
 
     best_scores,best_teams = [],[]
     value = -1
     if result_type == solver.ABNORMAL:
         result_string = "abnormal"
     elif result_type == solver.FEASIBLE or result_type == solver.OPTIMAL:
+        # If the solution is optimal or feasible, we loop through all teams and get those
+        # that form the solution as well as their scores
         result_string = "feasible"
-        value = objective.Value() #en caso de factible u optima, se recorre hasta encontrar los equipos solución y sus puntuaciones
+        value = objective.Value()
         for i in range(len(teams)):
             var = teams_variables[i]
             if var.solution_value()>0:
@@ -106,24 +180,26 @@ def use_pywrap_model(teams,students,compulsory,scores_d,score_f,restr_num_groups
     return solve_time,result_string,best_teams,best_scores,value
 
 def use_SAT(teams,students,compulsory,scores_d,score_f,restr_num_groups,sname="SAT"):
+    """
+    Same behaviour as the `use_pywrap_model` function, but only uses the SAT solver.
+    Please refer to that function to understand the inputs and outputs.
+    """
     sat_model = cp_model.CpModel()
     teams_variables = []
-    for team in teams: #1 variable binaria por equipo posible
-        # v = model.NewIntVar(0,1,f"Team {team}")
+    for team in teams: 
         v = sat_model.NewBoolVar(f"Team {team} is chosen")
-        teams_variables.append(v) #se añade a esta lista
+        teams_variables.append(v) 
 
-    #Restriction 1. Complete partition
+    # Restriction 1. Complete partition
     complete_partition = []
     for i in range(len(teams)):
         team = teams[i]
-        team_size = len(team) #tamaño del equipo
+        team_size = len(team) 
         var = teams_variables[i]
         complete_partition.append(team_size*var)
     sat_model.Add(cp_model.LinearExpr.Sum(complete_partition)==len(students))
-    # model.Add(sum(complete_partition)==len(students))
 
-    #Restriction 2.
+    # Restriction 2. Student j in only a team
     for student in students:
         eq1 = []
         for i in range(len(teams)):
@@ -131,21 +207,21 @@ def use_SAT(teams,students,compulsory,scores_d,score_f,restr_num_groups,sname="S
             if student in team:
                 var = teams_variables[i]
                 eq1.append(var)
-        # model.Add(sum(eq1)==1) 
         sat_model.Add(cp_model.LinearExpr.Sum(eq1)==1)
 
     #Restriction 3. Compulsory students in only a team
     set_st = set(students)
     for cjt in compulsory:
-        if cjt.intersection(set_st)==cjt: #verifica que los estudiantes indicados estén dentro del conjunto total de estudiantes
+        if cjt.intersection(set_st)==cjt: 
             comp_res = []
             for i in range(len(teams)):
                 team = teams[i]
-                if team.intersection(cjt): #si la intersección del equipo y los compulsory no es nula, es porque alguno está en ese equipo, por lo que se añade a la restricción
+                if team.intersection(cjt):
                     var = teams_variables[i]
                     comp_res.append(var)
             sat_model.Add(cp_model.LinearExpr.Sum(comp_res)==1)
 
+    # Restriction 4. Minimum and maximum number of groups of certain size
     for group_size, reslist in restr_num_groups.items():
         restr = []
         for i in range(len(teams)):
@@ -156,12 +232,12 @@ def use_SAT(teams,students,compulsory,scores_d,score_f,restr_num_groups,sname="S
         sat_model.Add(reslist[0] <= cp_model.LinearExpr.Sum(restr))
         sat_model.Add(cp_model.LinearExpr.Sum(restr) <= reslist[1])
 
+    # Objective function
     obj = []
     score_list = []
     for i in range(len(teams)):
         team = teams[i]
         if score_f==1:
-            # score = belbin_score(scores_d,team,students)
             score = int(belbin_score(scores_d,team,students)*8)
         elif score_f==2:
             score = int(mbti_score(scores_d,team,students)*8)

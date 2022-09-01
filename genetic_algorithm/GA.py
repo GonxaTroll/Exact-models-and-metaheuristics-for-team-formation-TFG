@@ -5,8 +5,8 @@ import math
 import random
 import Levenshtein
 from ast import literal_eval
-import time
 import sys
+import time
 sys.path.insert(0,"..")
 from general_functions import *
 
@@ -72,7 +72,6 @@ class StudentGA:
             mask.pop()
             valid_masks.append(mask)
         return valid_masks
-#         return np.array(valid_masks)
     
     def generate_distance_matrix(self):
         valid_str_masks = np.array(["".join(list(map(str,m))) for m in self.valid_masks])
@@ -135,13 +134,11 @@ class StudentGA:
         sp = 1.5
         if len(self.valid_masks)==1:
             return self.valid_masks[0]
-#         distance_row = self.distance_matrix[np.where(np.all(gg.valid_masks==mask,axis=1)==1)[0][0],:]
         distance_row = self.distance_matrix[self.valid_masks.index(mask),:]
           
         indices = [i for i in range(distance_row.size)]
         ranks = np.array([i for i in range(1,distance_row.size+1)])
-        ref = sorted(zip(distance_row,indices),reverse=True)
-        # sorted_distance_row = [x for x,_ in ref]   
+        ref = sorted(zip(distance_row,indices),reverse=True) 
         sorted_indices = [x for _,x in ref] 
         scaled_ranks = 2-sp + (2*(sp-1)*(ranks-1)/(ranks.size-1))
         selection_probs = scaled_ranks/np.sum(scaled_ranks)
@@ -160,6 +157,7 @@ class StudentGA:
         return mutated_mask
     
     def validate_comp_reject_solution(self,solution):
+        """Checks if a solution is feasible"""
         for team in solution:
             for cteam in self.compulsory:
                 if cteam.intersection(team) and cteam.intersection(team)!=cteam:
@@ -168,7 +166,6 @@ class StudentGA:
                 if rteam.intersection(team) and rteam.intersection(team)==rteam:
                     return False
         return True
-    
 
     def ranked_wheel_selection(self,population,sp,parent_number):
         sorted_pop = sorted(population,key=self.get_fitness)
@@ -185,48 +182,92 @@ class StudentGA:
         new_population = sorted(new_population, key = lambda x:self.get_fitness(x),reverse=True)
         return new_population[0:len(population)]
     
-    def execute(self,p_cross=0.8,p_mut=0.2):
+    def execute(self,configuration=None):
+        if configuration is None:
+            configuration = ('NWOX', 0.9, 'InheritMask', 'SS', 0.4, 'DivisionSelect', 'RWS-sp-1.5', 'EL', 50)
+
+        final_variables = ["best_fitness", "iterations", "final_time", "final_population"]
+        iteration_data = []
+        ini_time = time.time()
         iterations = 0
 
-        population = self.generate_random_population(population_size=100)
+        cross_name = configuration[0]
+        p_cross = configuration[1]
+        mask_cross = configuration[2]
+        mut_name = configuration[3]
+        p_mut = configuration[4]
+        mask_mut = configuration[5]
+        sel_name = configuration[6]
+        rep_name = configuration[7]
+        pop_size = configuration[8]
+
+        if cross_name=="NWOX":
+            crossover = NWOX
+        elif cross_name=="CX":
+            crossover = CX
+        elif cross_name=="CX2":
+            crossover = CX2_modded
+        if mut_name=="SS":
+            mutation = simple_swap
+        elif mut_name=="RSM":
+            mutation = RSM
+
+        if mask_mut == "DivisionSelect":
+            mask_mutation = self.mask_mutation
+        elif mask_mut == "RandomisedMasking":
+            mask_mutation = self.randomised_mask_mutation
+
+        if "RWS" in sel_name:
+            selection = self.ranked_wheel_selection
+        if rep_name=="EL":
+            replacement = self.elitist_replacement
+
+        population = self.generate_random_population(population_size=pop_size)
         generated_children = len(population)//2
 
+        fitnesses = [self.get_fitness(x) for x in population]
+        best_fitness_individual_iteration = max(fitnesses)
+        best_individual_iteration = population[fitnesses.index(best_fitness_individual_iteration)]
+        iteration_data.append([best_fitness_individual_iteration,0,0,"pop"])
+        best_last_fitness = best_fitness_individual_iteration
+        repeated_iterations=0
+
         while iterations < 500:
-            parents = self.ranked_wheel_selection(population, 1.5, generated_children)
+            ini_iteration_time = time.time()
+            parents = selection(population, 1.5, generated_children)
 
             random.shuffle(parents)
             final_children, new_children = [],[]
             for i in range(0, generated_children-1, 2):
                 contador = 0
-                while len(new_children)<2 or contador < 5:
-                    ##permutation
+                provisional_children = []
+                while len(new_children) < 2 or contador < 5:
                     parent1_perm = parents[i][0]
                     parent2_perm = parents[i+1][0]
                     keys = [parents[i][1], parents[i+1][1]]
 
                     r = random.random()
                     if r <= p_cross:
-                        children_perm = NWOX(parent1_perm, parent2_perm)
+                    
+                        children_perm = crossover(parent1_perm, parent2_perm)
                         random.shuffle(keys)
-                        #no se incluye la llave de bits porque se hereda?
                     else:
                         children_perm = [parent1_perm, parent2_perm]
-
 
                     mutated_children = []
                     for i in range(len(children_perm)):
                         mutated_child_perm, mutated_key = children_perm[i],keys[i]
                         r = random.random()
                         if r <= p_mut:
-                            mutated_child_perm = simple_swap(mutated_child_perm)
-                            mutated_key = self.mask_mutation(mutated_key)
+                            mutated_child_perm = mutation(mutated_child_perm)
+                            mutated_key = mask_mutation(mutated_key)
                         mutated_children.append([mutated_child_perm,mutated_key])
 
-                    provisional_children = []
                     for child in mutated_children:
-                        provisional_children.append(child)
                         if self.validate_comp_reject_solution(self.decode_solution(child)):
                             new_children.append(child)
+                        else:
+                            provisional_children.append(child)
                     contador+=1
 
                 if len(new_children)<2:
@@ -236,26 +277,43 @@ class StudentGA:
                 for c in new_children:
                     final_children.append(c)
 
-            population = self.elitist_replacement(population, final_children)
-
+            population=replacement(population, final_children)
 
             best_individual_iteration = population[0]
             best_fitness_individual_iteration = self.get_fitness(best_individual_iteration)
-            print(best_fitness_individual_iteration)
             iterations+=1
-        print(best_individual_iteration)
-            
-def aux_NWOX(parent1,parent2,i,j): #Non-Wrapping Ordered Crossover (auxiliary function)
-    child = [parent1[x] if i<=x<=j else None for x in range(len(parent1))] #copying the block of one parent
+            end_iteration_time = time.time()-ini_iteration_time
+            iteration_data.append([best_fitness_individual_iteration, iterations, end_iteration_time, "pop"])
+
+            if best_fitness_individual_iteration <= best_last_fitness:
+                repeated_iterations += 1
+            else:
+                repeated_iterations = 0
+            best_last_fitness = best_fitness_individual_iteration
+    
+            if iterations==500 or repeated_iterations == 100: 
+                final_time = time.time()-ini_time
+                result_data = [[best_fitness_individual_iteration, iterations, final_time, population]]
+                result_data = pd.DataFrame(result_data,columns=final_variables)
+                iteration_data = pd.DataFrame(iteration_data,columns=final_variables)
+                iteration_data.drop(columns=["final_population"],inplace=True)
+                return result_data,iteration_data
+
+## Other generic operators
+
+## 1. Crossover Operators  
+         
+def aux_NWOX(parent1,parent2,i,j): # Non-Wrapping Ordered Crossover (auxiliary function)
+    child = [parent1[x] if i<=x<=j else None for x in range(len(parent1))] # Copying the block of one parent
     search_ind = 0
-    for e2 in parent2: #adding the rest of the elements in the order of the other parent
+    for e2 in parent2: # Adding the rest of the elements in the order of the other parent
         if e2 not in child:
             while search_ind < len(child) and child[search_ind] is not None:
                 search_ind += 1
             child[search_ind] = e2
     return child
 
-def NWOX(parent1,parent2): #Non-Wrapping Ordered Crossover
+def NWOX(parent1,parent2): # Non-Wrapping Ordered Crossover
     i = random.randint(0,len(parent1)-1)
     j = random.randint(0,len(parent1)-1)
     if j < i:
@@ -264,7 +322,7 @@ def NWOX(parent1,parent2): #Non-Wrapping Ordered Crossover
     child2 = aux_NWOX(parent2,parent1,i,j)
     return [child1,child2]
 
-def aux_CX(parent1,parent2):
+def aux_CX(parent1,parent2): # Cycle Crossover (auxiliary function)
     parents = [parent1,parent2]
     N = len(parent1)
     child= [-1 for x in range(N)]
@@ -292,10 +350,10 @@ def aux_CX(parent1,parent2):
                 current_index = parents[other_index_parent].index(choice)
     return child
 
-def CX(parent1,parent2):
+def CX(parent1,parent2): # Cycle Crossover
     return [aux_CX(parent1,parent2),aux_CX(parent2,parent1)]
 
-def CX2_modded(parent1,parent2):
+def CX2_modded(parent1,parent2): # Cycle Crossover 2 corrected
     child1,child2 = [],[]
     original_parent1 = list(parent1)
     while len(child1)!=len(original_parent1):
@@ -329,13 +387,15 @@ def single_point_crossover(parent1,parent2):
     child2 = parent2[:i+1] + parent1[i+1:]
     return [child1,child2]
 
-def simple_swap(child):
+## 2. Mutation operators
+
+def simple_swap(child): # Simple Swap (SS)
     i = random.randint(0,len(child)-1)
     j = random.randint(0,len(child)-1)
     child[i],child[j] = child[j],child[i]
     return child
-#https://arxiv.org/ftp/arxiv/papers/1203/1203.3099.pdf#:~:text=In%20the%20reverse%20sequence%20mutation,covered%20in%20the%20previous%20operation.
-def RSM(child): #Reverse Sequence Mutation
+
+def RSM(child): #Reverse Sequence Mutation: https://arxiv.org/ftp/arxiv/papers/1203/1203.3099.pdf#:~:text=In%20the%20reverse%20sequence%20mutation,covered%20in%20the%20previous%20operation.
     child = list(child) #returning a copy
     i = random.randint(0, len(child)-1)
     j = random.randint(0, len(child)-1)
@@ -347,7 +407,7 @@ def RSM(child): #Reverse Sequence Mutation
         j -= 1
     return child
 
-def bitwise_mutation(child,p_mut=0.5):
+def bitwise_mutation(child,p_mut=0.5): # Bitwise mutation
     child = list(child)
     for i in range(len(child)):
         r = random.random()
